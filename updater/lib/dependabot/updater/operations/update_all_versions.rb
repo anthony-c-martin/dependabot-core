@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 # This class implements our strategy for iterating over all of the dependencies
@@ -49,23 +50,23 @@ module Dependabot
           end
 
           if Environment.deterministic_updates?
-            dependency_snapshot.allowed_dependencies
+            dependency_snapshot.ungrouped_dependencies
           else
-            dependency_snapshot.allowed_dependencies.shuffle
+            dependency_snapshot.ungrouped_dependencies.shuffle
           end
         end
 
         def check_and_create_pr_with_error_handling(dependency)
           check_and_create_pull_request(dependency)
         rescue Dependabot::InconsistentRegistryResponse => e
-          error_handler.log_error(
+          error_handler.log_dependency_error(
             dependency: dependency,
             error: e,
             error_type: "inconsistent_registry_response",
             error_detail: e.message
           )
         rescue StandardError => e
-          error_handler.handle_dependabot_error(error: e, dependency: dependency)
+          error_handler.handle_dependency_error(error: e, dependency: dependency)
         end
 
         # rubocop:disable Metrics/AbcSize
@@ -173,11 +174,11 @@ module Dependabot
           latest_version = checker.latest_version&.to_s
           return false if latest_version.nil?
 
-          job.existing_pull_requests.
-            select { |pr| pr.count == 1 }.
-            map(&:first).
-            select { |pr| pr.fetch("dependency-name") == checker.dependency.name }.
-            any? { |pr| pr.fetch("dependency-version", nil) == latest_version }
+          job.existing_pull_requests
+             .select { |pr| pr.count == 1 }
+             .map(&:first)
+             .select { |pr| pr.fetch("dependency-name") == checker.dependency.name }
+             .any? { |pr| pr.fetch("dependency-version", nil) == latest_version }
         end
 
         def existing_pull_request(updated_dependencies)
@@ -196,7 +197,7 @@ module Dependabot
         end
 
         def requirements_to_unlock(checker)
-          if job.lockfile_only? || !checker.requirements_unlocked_or_can_be?
+          if !checker.requirements_unlocked_or_can_be?
             if checker.can_update?(requirements_to_unlock: :none) then :none
             else
               :update_not_possible
@@ -221,9 +222,9 @@ module Dependabot
         # If a version update for a peer dependency is possible we should
         # defer to the PR that will be created for it to avoid duplicate PRs.
         def peer_dependency_should_update_instead?(dependency_name, updated_deps)
-          updated_deps.
-            reject { |dep| dep.name == dependency_name }.
-            any? do |dep|
+          updated_deps
+            .reject { |dep| dep.name == dependency_name }
+            .any? do |dep|
               next true if existing_pull_request([dep])
 
               original_peer_dep = ::Dependabot::Dependency.new(
@@ -232,8 +233,8 @@ module Dependabot
                 requirements: dep.previous_requirements,
                 package_manager: dep.package_manager
               )
-              update_checker_for(original_peer_dep, raise_on_ignored: false).
-                can_update?(requirements_to_unlock: :own)
+              update_checker_for(original_peer_dep, raise_on_ignored: false)
+                .can_update?(requirements_to_unlock: :own)
             end
         end
 

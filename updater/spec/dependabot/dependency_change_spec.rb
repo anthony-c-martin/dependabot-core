@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require "spec_helper"
@@ -14,7 +15,7 @@ RSpec.describe Dependabot::DependencyChange do
   end
 
   let(:job) do
-    instance_double(Dependabot::Job)
+    instance_double(Dependabot::Job, ignore_conditions: [])
   end
 
   let(:updated_dependencies) do
@@ -51,14 +52,14 @@ RSpec.describe Dependabot::DependencyChange do
 
   describe "#pr_message" do
     let(:github_source) do
-      {
-        "provider" => "github",
-        "repo" => "dependabot-fixtures/dependabot-test-ruby-package",
-        "directory" => "/",
-        "branch" => nil,
-        "api-endpoint" => "https://api.github.com/",
-        "hostname" => "github.com"
-      }
+      Dependabot::Source.new(
+        provider: "github",
+        repo: "dependabot-fixtures/dependabot-test-ruby-package",
+        directory: "/",
+        branch: nil,
+        api_endpoint: "https://api.github.com/",
+        hostname: "github.com"
+      )
     end
 
     let(:job_credentials) do
@@ -93,16 +94,48 @@ RSpec.describe Dependabot::DependencyChange do
     end
 
     it "delegates to the Dependabot::PullRequestCreator::MessageBuilder with the correct configuration" do
-      expect(Dependabot::PullRequestCreator::MessageBuilder).
-        to receive(:new).with(
+      expect(Dependabot::PullRequestCreator::MessageBuilder)
+        .to receive(:new).with(
           source: github_source,
           files: updated_dependency_files,
           dependencies: updated_dependencies,
           credentials: job_credentials,
-          commit_message_options: commit_message_options
+          commit_message_options: commit_message_options,
+          dependency_group: nil,
+          pr_message_encoding: nil,
+          pr_message_max_length: 65_535,
+          ignore_conditions: []
         )
 
       expect(dependency_change.pr_message).to eql("Hello World!")
+    end
+
+    context "when a dependency group is assigned" do
+      it "delegates to the Dependabot::PullRequestCreator::MessageBuilder with the group included" do
+        group = Dependabot::DependencyGroup.new(name: "foo", rules: { patterns: ["*"] })
+
+        dependency_change = described_class.new(
+          job: job,
+          updated_dependencies: updated_dependencies,
+          updated_dependency_files: updated_dependency_files,
+          dependency_group: group
+        )
+
+        expect(Dependabot::PullRequestCreator::MessageBuilder)
+          .to receive(:new).with(
+            source: github_source,
+            files: updated_dependency_files,
+            dependencies: updated_dependencies,
+            credentials: job_credentials,
+            commit_message_options: commit_message_options,
+            dependency_group: group,
+            pr_message_encoding: nil,
+            pr_message_max_length: 65_535,
+            ignore_conditions: []
+          )
+
+        expect(dependency_change.pr_message).to eql("Hello World!")
+      end
     end
   end
 
@@ -113,15 +146,14 @@ RSpec.describe Dependabot::DependencyChange do
 
     context "when a dependency group is assigned" do
       it "is true" do
-        rule = described_class.new(
+        dependency_change = described_class.new(
           job: job,
           updated_dependencies: updated_dependencies,
           updated_dependency_files: updated_dependency_files,
-          # For now the dependency_group parameter is treated permissively as any non-nil value
-          dependency_group: anything
+          dependency_group: Dependabot::DependencyGroup.new(name: "foo", rules: { patterns: ["*"] })
         )
 
-        expect(rule.grouped_update?).to be true
+        expect(dependency_change.grouped_update?).to be true
       end
     end
   end

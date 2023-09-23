@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require "nokogiri"
@@ -70,7 +71,13 @@ module Dependabot
       end
 
       def project_files
-        dependency_files.select { |df| df.name.match?(/\.[a-z]{2}proj$/) }
+        projfile = /\.[a-z]{2}proj$/
+        packageprops = /[Dd]irectory.[Pp]ackages.props/
+
+        dependency_files.select do |df|
+          df.name.match?(projfile) ||
+            df.name.match?(packageprops)
+        end
       end
 
       def packages_config_files
@@ -84,12 +91,17 @@ module Dependabot
           project_files -
           packages_config_files -
           nuget_configs -
+          package_locks -
           [global_json] -
           [dotnet_tools_json]
       end
 
       def nuget_configs
         dependency_files.select { |f| f.name.match?(/nuget\.config$/i) }
+      end
+
+      def package_locks
+        dependency_files.select { |f| f.name.match?(/packages\.lock\.json$/i) }
       end
 
       def global_json

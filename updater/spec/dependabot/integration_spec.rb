@@ -1,6 +1,9 @@
+# typed: false
 # frozen_string_literal: true
 
 require "spec_helper"
+require "support/dependency_file_helpers"
+
 require "dependabot/dependency"
 require "dependabot/dependency_file"
 require "dependabot/file_fetchers"
@@ -11,6 +14,8 @@ require "dependabot/update_files_command"
 require "dependabot/api_client"
 
 RSpec.describe "Dependabot Updates" do
+  include DependencyFileHelpers
+
   let(:fetch_files) { Dependabot::FileFetcherCommand.new }
   let(:update_files) { Dependabot::UpdateFilesCommand.new }
 
@@ -35,11 +40,7 @@ RSpec.describe "Dependabot Updates" do
     # by the previous step
     fetch_job_definition.merge({
       "base_commit_sha" => "sha",
-      "base64_dependency_files" => dependency_files.map do |file|
-        base64_file = file.dup
-        base64_file.content = Base64.encode64(file.content) unless file.binary?
-        base64_file.to_h
-      end
+      "base64_dependency_files" => encode_dependency_files(dependency_files)
     })
   end
 
@@ -51,14 +52,14 @@ RSpec.describe "Dependabot Updates" do
                     mark_job_as_processed: nil,
                     update_dependency_list: nil,
                     record_update_job_error: nil,
-                    record_package_manager_version: nil,
+                    record_update_job_unknown_error: nil,
+                    record_ecosystem_versions: nil,
                     increment_metric: nil)
   end
   let(:file_fetcher) do
     instance_double(Dependabot::FileFetchers::Base,
                     files: dependency_files,
-                    commit: "sha",
-                    package_manager_version: nil)
+                    commit: "sha")
   end
   let(:message_builder) do
     instance_double(Dependabot::PullRequestCreator::MessageBuilder, message: nil)
@@ -79,8 +80,6 @@ RSpec.describe "Dependabot Updates" do
 
     # Stub Dependabot object with instance doubles
     allow(Dependabot::ApiClient).to receive(:new).and_return(api_client)
-    # Recording the package manager happens via an observer so the instantiated `api_client` does not receive this call
-    allow_any_instance_of(Dependabot::ApiClient).to receive(:record_package_manager_version)
     allow(Dependabot::FileFetchers).to receive_message_chain(:for_package_manager, :new).and_return(file_fetcher)
     allow(Dependabot::PullRequestCreator::MessageBuilder).to receive(:new).and_return(message_builder)
 
@@ -138,13 +137,14 @@ RSpec.describe "Dependabot Updates" do
         "update_subdependencies" => false,
         "updating_a_pull_request" => false,
         "vendor_dependencies" => false,
-        "security_updates_only" => false
+        "security_updates_only" => false,
+        "dependency_groups" => []
       }
     end
 
     it "updates dependencies correctly" do
-      expect(api_client).
-        to receive(:create_pull_request) do |dependency_change, commit_sha|
+      expect(api_client)
+        .to receive(:create_pull_request) do |dependency_change, commit_sha|
           dep = Dependabot::Dependency.new(
             name: "dummy-pkg-b",
             package_manager: "bundler",
@@ -209,8 +209,18 @@ RSpec.describe "Dependabot Updates" do
       end
 
       it "notifies Dependabot API of the problem" do
-        expect(api_client).to receive(:record_update_job_error).
-          with({ error_type: "unknown_error", error_details: nil })
+        expect(api_client).to receive(:record_update_job_unknown_error)
+          .with(
+            { error_type: "unknown_error",
+              error_details: {
+                "error-backtrace" => an_instance_of(String),
+                "error-message" => "oh no!",
+                "error-class" => "StandardError",
+                "package-manager" => "bundler",
+                "job-id" => 1,
+                "job-dependency_group" => []
+              } }
+          )
 
         expect { run_job }.to output(/oh no!/).to_stdout_from_any_process
       end
@@ -232,8 +242,8 @@ RSpec.describe "Dependabot Updates" do
         end
 
         it "raises an exception" do
-          expect { run_job }.to raise_error(Dependabot::RunFailure).
-            and output(/oh no!/).to_stdout_from_any_process
+          expect { run_job }.to raise_error(Dependabot::RunFailure)
+            .and output(/oh no!/).to_stdout_from_any_process
         end
       end
     end
@@ -330,8 +340,8 @@ RSpec.describe "Dependabot Updates" do
     end
 
     it "updates dependencies correctly" do
-      expect(api_client).
-        to receive(:create_pull_request) do |dependency_change, commit_sha|
+      expect(api_client)
+        .to receive(:create_pull_request) do |dependency_change, commit_sha|
           dep = Dependabot::Dependency.new(
             name: "dummy-git-dependency",
             package_manager: "bundler",

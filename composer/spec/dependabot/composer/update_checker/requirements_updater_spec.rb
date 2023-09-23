@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require "spec_helper"
@@ -703,6 +704,14 @@ RSpec.describe Dependabot::Composer::UpdateChecker::RequirementsUpdater do
             )
           end
         end
+      end
+    end
+
+    context "with lockfile_only as the update strategy" do
+      let(:update_strategy) { :lockfile_only }
+
+      it "does not update any requirements" do
+        expect(updater.updated_requirements).to eq(requirements)
       end
     end
   end

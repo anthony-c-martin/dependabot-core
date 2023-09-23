@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require "base64"
@@ -21,8 +22,11 @@ module Dependabot
         @base_commit_sha = file_fetcher.commit
         raise "base commit SHA not found" unless @base_commit_sha
 
-        version = file_fetcher.package_manager_version
-        api_client.record_package_manager_version(version[:ecosystem], version[:package_managers]) unless version.nil?
+        # We don't set this flag in GHES because there's no point in recording versions since we can't access that data.
+        if Experiments.enabled?(:record_ecosystem_versions)
+          ecosystem_versions = file_fetcher.ecosystem_versions
+          api_client.record_ecosystem_versions(ecosystem_versions) unless ecosystem_versions.nil?
+        end
 
         dependency_files
       rescue StandardError => e
@@ -157,7 +161,7 @@ module Dependabot
           # If we get a 500 from GitHub there's very little we can do about it,
           # and responsibility for fixing it is on them, not us. As a result we
           # quietly log these as errors
-          { "error-type": "unknown_error" }
+          { "error-type": "server_error" }
         when *Octokit::RATE_LIMITED_ERRORS
           # If we get a rate-limited error we let dependabot-api handle the
           # retry by re-enqueing the update job after the reset
@@ -170,9 +174,21 @@ module Dependabot
         else
           Dependabot.logger.error(error.message)
           error.backtrace.each { |line| Dependabot.logger.error line }
+          unknown_error_details = {
+            "error-class" => error.class.to_s,
+            "error-message" => error.message,
+            "error-backtrace" => error.backtrace.join("\n"),
+            "package-manager" => job.package_manager,
+            "job-id" => job.id,
+            "job-dependencies" => job.dependencies,
+            "job-dependency_group" => job.dependency_groups
+          }.compact
 
           service.capture_exception(error: error, job: job)
-          { "error-type": "unknown_error" }
+          {
+            "error-type": "file_fetcher_error",
+            "error-detail": unknown_error_details
+          }
         end
 
       record_error(error_details) if error_details
@@ -187,10 +203,17 @@ module Dependabot
     end
 
     def record_error(error_details)
-      service.record_update_job_error(
-        error_type: error_details.fetch(:"error-type"),
-        error_details: error_details[:"error-detail"]
-      )
+      if error_details[:"error-type"] == "file_fetcher_error"
+        service.record_update_job_unknown_error(
+          error_type: error_details.fetch(:"error-type"),
+          error_details: error_details[:"error-detail"]
+        )
+      else
+        service.record_update_job_error(
+          error_type: error_details.fetch(:"error-type"),
+          error_details: error_details[:"error-detail"]
+        )
+      end
     end
 
     # Perform a debug check of connectivity to GitHub/GHES. This also ensures

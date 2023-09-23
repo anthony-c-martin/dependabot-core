@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require "http"
@@ -88,6 +89,24 @@ module Dependabot
       sleep(rand(3.0..10.0)) && retry
     end
 
+    def record_update_job_unknown_error(error_type: "unknown_error", error_details:)
+      api_url = "#{base_url}/update_jobs/#{job_id}/record_update_job_unknown_error"
+      body = {
+        data: {
+          "error-type": error_type,
+          "error-details": error_details
+        }
+      }
+      response = http_client.post(api_url, json: body)
+      raise ApiError, response.body if response.code >= 400
+    rescue HTTP::ConnectionError, OpenSSL::SSL::SSLError
+      retry_count ||= 0
+      retry_count += 1
+      raise if retry_count > 3
+
+      sleep(rand(3.0..10.0)) && retry
+    end
+
     def mark_job_as_processed(base_commit_sha)
       api_url = "#{base_url}/update_jobs/#{job_id}/mark_as_processed"
       body = { data: { "base-commit-sha": base_commit_sha } }
@@ -119,13 +138,10 @@ module Dependabot
       sleep(rand(3.0..10.0)) && retry
     end
 
-    def record_package_manager_version(ecosystem, package_managers)
-      api_url = "#{base_url}/update_jobs/#{job_id}/record_package_manager_version"
+    def record_ecosystem_versions(ecosystem_versions)
+      api_url = "#{base_url}/update_jobs/#{job_id}/record_ecosystem_versions"
       body = {
-        data: {
-          ecosystem: ecosystem,
-          "package-managers": package_managers
-        }
+        data: { ecosystem_versions: ecosystem_versions }
       }
       response = http_client.post(api_url, json: body)
       raise ApiError, response.body if response.code >= 400
@@ -166,6 +182,15 @@ module Dependabot
       client
     end
 
+    def dependency_group_hash(dependency_change)
+      return {} unless dependency_change.grouped_update?
+
+      # FIXME: We currently assumpt that _an attempt_ to send a DependencyGroup#id should
+      # result in the `grouped-update` flag being set, regardless of whether the
+      # DependencyGroup actually exists.
+      { "dependency-group": dependency_change.dependency_group.to_h }.compact
+    end
+
     def create_pull_request_data(dependency_change, base_commit_sha)
       data = {
         dependencies: dependency_change.updated_dependencies.map do |dep|
@@ -181,17 +206,8 @@ module Dependabot
         end,
         "updated-dependency-files": dependency_change.updated_dependency_files_hash,
         "base-commit-sha": base_commit_sha
-      }.merge({
-        # TODO: Replace this flag with a dependency-group object
-        #
-        # In future this should be something like:
-        #    "dependency-group": dependency_change.dependency_group_hash
-        #
-        # This will allow us to pass back the rule id and other parameters
-        # to allow Dependabot API to augment PR creation and associate it
-        # with the rule for rebasing, etc.
-        "grouped-update": dependency_change.grouped_update? ? true : nil
-      }.compact)
+      }.merge(dependency_group_hash(dependency_change))
+
       return data unless dependency_change.pr_message
 
       data["commit-message"] = dependency_change.pr_message.commit_message

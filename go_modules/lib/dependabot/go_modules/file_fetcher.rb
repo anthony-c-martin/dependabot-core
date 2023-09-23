@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "dependabot/file_fetchers"
@@ -14,11 +15,10 @@ module Dependabot
         "Repo must contain a go.mod."
       end
 
-      def package_manager_version
+      def ecosystem_versions
         return nil unless go_mod
 
         {
-          ecosystem: "gomod",
           package_managers: {
             "gomod" => go_mod.content.match(/^go\s(\d+\.\d+)/)&.captures&.first || "unknown"
           }
@@ -37,8 +37,8 @@ module Dependabot
           unless go_mod
             raise(
               Dependabot::DependencyFileNotFound,
-              Pathname.new(File.join(directory, "go.mod")).
-              cleanpath.to_path
+              Pathname.new(File.join(directory, "go.mod"))
+              .cleanpath.to_path
             )
           end
 
@@ -50,11 +50,15 @@ module Dependabot
       end
 
       def go_mod
-        @go_mod ||= fetch_file_if_present("go.mod")
+        return @go_mod if defined?(@go_mod)
+
+        @go_mod = fetch_file_if_present("go.mod")
       end
 
       def go_sum
-        @go_sum ||= fetch_file_if_present("go.sum")
+        return @go_sum if defined?(@go_sum)
+
+        @go_sum = fetch_file_if_present("go.sum")
       end
 
       def recurse_submodules_when_cloning?
@@ -64,5 +68,5 @@ module Dependabot
   end
 end
 
-Dependabot::FileFetchers.
-  register("go_modules", Dependabot::GoModules::FileFetcher)
+Dependabot::FileFetchers
+  .register("go_modules", Dependabot::GoModules::FileFetcher)

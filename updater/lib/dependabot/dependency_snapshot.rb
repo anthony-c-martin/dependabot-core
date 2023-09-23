@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require "base64"
@@ -53,16 +54,29 @@ module Dependabot
       end
     end
 
-    # A dependency snapshot will always have the same set of dependencies since it only depends
-    # on the Job and dependency groups, which are static for a given commit.
+    # Returns just the group that is specifically requested to be updated by
+    # the job definition
+    def job_group
+      return nil unless Dependabot::Experiments.enabled?(:grouped_updates_prototype)
+      return nil unless job.dependency_group_to_refresh
+      return @job_group if defined?(@job_group)
+
+      @job_group = @dependency_group_engine.find_group(name: job.dependency_group_to_refresh)
+    end
+
     def groups
-      # The DependencyGroupEngine registers dependencies when the Job is created
-      # and it will memoize the dependency groups
-      Dependabot::DependencyGroupEngine.dependency_groups(allowed_dependencies)
+      return [] unless Dependabot::Experiments.enabled?(:grouped_updates_prototype)
+
+      @dependency_group_engine.dependency_groups
     end
 
     def ungrouped_dependencies
-      Dependabot::DependencyGroupEngine.ungrouped_dependencies(allowed_dependencies)
+      # If no groups are defined, all dependencies are ungrouped by default.
+      return allowed_dependencies unless groups.any?
+
+      # Otherwise return dependencies that haven't been handled during the group update portion.
+      all_handled_dependencies = Set.new(groups.map { |g| g.handled_dependencies.to_a }.flatten)
+      allowed_dependencies.reject { |dep| all_handled_dependencies.include?(dep.name) }
     end
 
     private
@@ -73,6 +87,11 @@ module Dependabot
       @dependency_files = dependency_files
 
       @dependencies = parse_files!
+
+      return unless Dependabot::Experiments.enabled?(:grouped_updates_prototype)
+
+      @dependency_group_engine = DependencyGroupEngine.from_job_config(job: job)
+      @dependency_group_engine.assign_to_groups!(dependencies: allowed_dependencies)
     end
 
     attr_reader :job

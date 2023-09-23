@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "dependabot/shared_helpers"
@@ -43,8 +44,8 @@ module Dependabot
               )
           end
 
-          vendor_updater.updated_vendor_cache_files(base_directory: directory).
-            each do |file|
+          vendor_updater.updated_vendor_cache_files(base_directory: directory)
+                        .each do |file|
             updated_files << file
           end
         end
@@ -117,6 +118,7 @@ module Dependabot
         @file_updater ||=
           GoModUpdater.new(
             dependencies: dependencies,
+            dependency_files: dependency_files,
             credentials: credentials,
             repo_contents_path: repo_contents_path,
             directory: directory,
@@ -135,5 +137,5 @@ module Dependabot
   end
 end
 
-Dependabot::FileUpdaters.
-  register("go_modules", Dependabot::GoModules::FileUpdater)
+Dependabot::FileUpdaters
+  .register("go_modules", Dependabot::GoModules::FileUpdater)

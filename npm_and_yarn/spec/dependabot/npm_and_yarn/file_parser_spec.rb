@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require "spec_helper"
@@ -39,9 +40,23 @@ RSpec.describe Dependabot::NpmAndYarn::FileParser do
       subject(:top_level_dependencies) { dependencies.select(&:top_level?) }
 
       context "with no lockfile" do
-        let(:files) { project_dependency_files("npm6/exact_version_requirements") }
+        let(:files) { project_dependency_files("npm6/exact_version_requirements_no_lockfile") }
 
         its(:length) { is_expected.to eq(3) }
+
+        describe "the first dependency" do
+          subject { top_level_dependencies.first }
+
+          it { is_expected.to be_a(Dependabot::Dependency) }
+          its(:name) { is_expected.to eq("chalk") }
+          its(:version) { is_expected.to eq("0.3.0") }
+        end
+      end
+
+      context "with no lockfile, and non exact requirements" do
+        let(:files) { project_dependency_files("generic/file_version_requirements_no_lockfile") }
+
+        its(:length) { is_expected.to eq(0) }
       end
 
       context "with a package-lock.json" do
@@ -250,6 +265,31 @@ RSpec.describe Dependabot::NpmAndYarn::FileParser do
                   }
                 }]
               )
+            end
+
+            context "with a credential that matches the hostname, but not the path" do
+              let(:credentials) do
+                [{
+                  "type" => "npm_registry",
+                  "registry" => "npm.pkg.github.com/dependabot",
+                  "username" => "x-access-token",
+                  "password" => "token"
+                }]
+              end
+
+              its(:requirements) do
+                is_expected.to eq(
+                  [{
+                    requirement: "^2.0.1",
+                    file: "package.json",
+                    groups: ["devDependencies"],
+                    source: {
+                      type: "registry",
+                      url: "https://npm.pkg.github.com"
+                    }
+                  }]
+                )
+              end
             end
           end
 
@@ -468,8 +508,8 @@ RSpec.describe Dependabot::NpmAndYarn::FileParser do
               let(:files) { project_dependency_files("npm6/git_dependency_branch_version") }
 
               it "is excluded" do
-                expect(top_level_dependencies.map(&:name)).
-                  to_not include("is-number")
+                expect(top_level_dependencies.map(&:name))
+                  .to_not include("is-number")
               end
             end
           end
@@ -514,9 +554,9 @@ RSpec.describe Dependabot::NpmAndYarn::FileParser do
                 "content-type" => "application/x-git-upload-pack-advertisement"
               }
               pack_url = git_url + "/info/refs?service=git-upload-pack"
-              stub_request(:get, pack_url).
-                with(basic_auth: %w(x-access-token token)).
-                to_return(
+              stub_request(:get, pack_url)
+                .with(basic_auth: %w(x-access-token token))
+                .to_return(
                   status: 200,
                   body: fixture("git", "upload_packs", git_pack_fixture_name),
                   headers: git_header
@@ -559,9 +599,9 @@ RSpec.describe Dependabot::NpmAndYarn::FileParser do
                 before do
                   git_url = "https://github.com/jonschlinkert/is-number.git"
                   pack_url = git_url + "/info/refs?service=git-upload-pack"
-                  stub_request(:get, pack_url).
-                    with(basic_auth: %w(x-access-token token)).
-                    to_return(status: 404)
+                  stub_request(:get, pack_url)
+                    .with(basic_auth: %w(x-access-token token))
+                    .to_return(status: 404)
                 end
 
                 its(:version) do
@@ -1370,6 +1410,12 @@ RSpec.describe Dependabot::NpmAndYarn::FileParser do
         let(:files) { project_dependency_files("yarn/no_lockfile_change") }
 
         its(:length) { is_expected.to eq(389) }
+      end
+
+      context "with a pnpm-lock.yaml" do
+        let(:files) { project_dependency_files("pnpm/no_lockfile_change") }
+
+        its(:length) { is_expected.to eq(366) }
       end
 
       context "with a package-lock.json" do

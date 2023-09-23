@@ -1,9 +1,11 @@
+# typed: false
 # frozen_string_literal: true
 
 require "spec_helper"
 require "dependabot/api_client"
 require "dependabot/dependency_change"
 require "dependabot/dependency_snapshot"
+require "dependabot/errors"
 require "dependabot/service"
 
 RSpec.describe Dependabot::Service do
@@ -14,7 +16,8 @@ RSpec.describe Dependabot::Service do
       create_pull_request: nil,
       update_pull_request: nil,
       close_pull_request: nil,
-      record_update_job_error: nil
+      record_update_job_error: nil,
+      record_update_job_unknown_error: nil
     })
   end
   subject(:service) { described_class.new(client: mock_client) }
@@ -65,8 +68,8 @@ RSpec.describe Dependabot::Service do
     end
 
     before do
-      allow(Dependabot::PullRequestCreator::MessageBuilder).
-        to receive_message_chain(:new, :message).and_return(pr_message)
+      allow(Dependabot::PullRequestCreator::MessageBuilder)
+        .to receive_message_chain(:new, :message).and_return(pr_message)
 
       service.create_pull_request(dependency_change, base_sha)
     end
@@ -159,7 +162,7 @@ RSpec.describe Dependabot::Service do
   describe "Instance methods delegated to @client" do
     {
       mark_job_as_processed: %w(mock_sha),
-      record_package_manager_version: %w(mock_ecosystem mock_package_managers)
+      record_ecosystem_versions: %w(mock_ecosystem_versions)
     }.each do |method, arguments|
       before { allow(mock_client).to receive(method) }
 
@@ -178,17 +181,18 @@ RSpec.describe Dependabot::Service do
       expect(mock_client).to have_received(:increment_metric).with("apples", tags: { green: 1, red: 2 })
     end
   end
+
   describe "#create_pull_request" do
     include_context :a_pr_was_created
 
     it "delegates to @client" do
-      expect(mock_client).
-        to have_received(:create_pull_request).with(dependency_change, base_sha)
+      expect(mock_client)
+        .to have_received(:create_pull_request).with(dependency_change, base_sha)
     end
 
     it "memoizes a shorthand summary of the PR" do
-      expect(service.pull_requests).
-        to eql([["dependabot-fortran ( from 1.7.0 to 1.8.0 ), dependabot-pascal ( from 2.7.0 to 2.8.0 )", :created]])
+      expect(service.pull_requests)
+        .to eql([["dependabot-fortran ( from 1.7.0 to 1.8.0 ), dependabot-pascal ( from 2.7.0 to 2.8.0 )", :created]])
     end
   end
 
@@ -232,6 +236,60 @@ RSpec.describe Dependabot::Service do
 
     it "memoizes a shorthand summary of the error" do
       expect(service.errors).to eql([["epoch_error", nil]])
+    end
+  end
+
+  describe "#capture_exception" do
+    before do
+      allow(Raven).to receive(:capture_exception)
+    end
+
+    let(:error) do
+      Dependabot::DependabotError.new("Something went wrong")
+    end
+
+    it "delegates error capture to Sentry (Raven)" do
+      service.capture_exception(error: error, tags: { foo: "bar" }, extra: { baz: "qux" })
+
+      expect(Raven).to have_received(:capture_exception).with(error, tags: { foo: "bar" }, extra: { baz: "qux" })
+    end
+
+    it "extracts information from a job if provided" do
+      job = OpenStruct.new(id: 1234, package_manager: "bundler", repo_private?: false)
+      service.capture_exception(error: error, job: job)
+
+      expect(Raven).to have_received(:capture_exception)
+        .with(error,
+              tags: {
+                update_job_id: 1234,
+                package_manager: "bundler",
+                repo_private: false
+              },
+              extra: {})
+    end
+
+    it "extracts information from a dependency if provided" do
+      dependency = OpenStruct.new(name: "lodash")
+      service.capture_exception(error: error, dependency: dependency)
+
+      expect(Raven).to have_received(:capture_exception)
+        .with(error,
+              tags: {},
+              extra: {
+                dependency_name: "lodash"
+              })
+    end
+
+    it "extracts information from a dependency_group if provided" do
+      dependency_group = OpenStruct.new(name: "all-the-things")
+      service.capture_exception(error: error, dependency_group: dependency_group)
+
+      expect(Raven).to have_received(:capture_exception)
+        .with(error,
+              tags: {},
+              extra: {
+                dependency_group: "all-the-things"
+              })
     end
   end
 
@@ -360,8 +418,9 @@ RSpec.describe Dependabot::Service do
       include_context :a_pr_was_created
 
       it "includes the summary of the created PR" do
-        expect(service.summary).
-          to include("created", "dependabot-fortran ( from 1.7.0 to 1.8.0 ), dependabot-pascal ( from 2.7.0 to 2.8.0 )")
+        expect(service.summary)
+          .to include("created",
+                      "dependabot-fortran ( from 1.7.0 to 1.8.0 ), dependabot-pascal ( from 2.7.0 to 2.8.0 )")
       end
     end
 
@@ -369,8 +428,8 @@ RSpec.describe Dependabot::Service do
       include_context :a_pr_was_updated
 
       it "includes the summary of the updated PR" do
-        expect(service.summary).
-          to include("updated", "dependabot-cobol ( from 3.7.0 to 3.8.0 )")
+        expect(service.summary)
+          .to include("updated", "dependabot-cobol ( from 3.7.0 to 3.8.0 )")
       end
     end
 
@@ -378,8 +437,8 @@ RSpec.describe Dependabot::Service do
       include_context :a_pr_was_closed
 
       it "includes the summary of the closed PR" do
-        expect(service.summary).
-          to include("closed: dependency_removed", "dependabot-fortran")
+        expect(service.summary)
+          .to include("closed: dependency_removed", "dependabot-fortran")
       end
     end
 
@@ -387,13 +446,13 @@ RSpec.describe Dependabot::Service do
       include_context :an_error_was_reported
 
       it "includes an error count" do
-        expect(service.summary).
-          to include("Dependabot encountered '1' error(s) during execution")
+        expect(service.summary)
+          .to include("Dependabot encountered '1' error(s) during execution")
       end
 
       it "includes an error summary" do
-        expect(service.summary).
-          to include("epoch_error")
+        expect(service.summary)
+          .to include("epoch_error")
       end
     end
 
@@ -401,15 +460,15 @@ RSpec.describe Dependabot::Service do
       include_context :a_dependency_error_was_reported
 
       it "includes an error count" do
-        expect(service.summary).
-          to include("Dependabot encountered '1' error(s) during execution")
+        expect(service.summary)
+          .to include("Dependabot encountered '1' error(s) during execution")
       end
 
       it "includes an error summary" do
-        expect(service.summary).
-          to include("unknown_error")
-        expect(service.summary).
-          to include("dependabot-cobol")
+        expect(service.summary)
+          .to include("unknown_error")
+        expect(service.summary)
+          .to include("dependabot-cobol")
       end
     end
 
@@ -418,13 +477,13 @@ RSpec.describe Dependabot::Service do
       include_context :a_pr_was_closed
 
       it "includes the summary of the updated PR" do
-        expect(service.summary).
-          to include("updated", "dependabot-cobol ( from 3.7.0 to 3.8.0 )")
+        expect(service.summary)
+          .to include("updated", "dependabot-cobol ( from 3.7.0 to 3.8.0 )")
       end
 
       it "includes the summary of the closed PR" do
-        expect(service.summary).
-          to include("closed: dependency_removed", "dependabot-fortran")
+        expect(service.summary)
+          .to include("closed: dependency_removed", "dependabot-fortran")
       end
     end
 
@@ -435,27 +494,28 @@ RSpec.describe Dependabot::Service do
       include_context :a_dependency_error_was_reported
 
       it "includes the summary of the created PR" do
-        expect(service.summary).
-          to include("created", "dependabot-fortran ( from 1.7.0 to 1.8.0 ), dependabot-pascal ( from 2.7.0 to 2.8.0 )")
+        expect(service.summary)
+          .to include("created",
+                      "dependabot-fortran ( from 1.7.0 to 1.8.0 ), dependabot-pascal ( from 2.7.0 to 2.8.0 )")
       end
 
       it "includes the summary of the closed PR" do
-        expect(service.summary).
-          to include("closed: dependency_removed", "dependabot-fortran")
+        expect(service.summary)
+          .to include("closed: dependency_removed", "dependabot-fortran")
       end
 
       it "includes an error count" do
-        expect(service.summary).
-          to include("Dependabot encountered '2' error(s) during execution")
+        expect(service.summary)
+          .to include("Dependabot encountered '2' error(s) during execution")
       end
 
       it "includes an error summary" do
-        expect(service.summary).
-          to include("epoch_error")
-        expect(service.summary).
-          to include("unknown_error")
-        expect(service.summary).
-          to include("dependabot-fortran")
+        expect(service.summary)
+          .to include("epoch_error")
+        expect(service.summary)
+          .to include("unknown_error")
+        expect(service.summary)
+          .to include("dependabot-fortran")
       end
     end
   end

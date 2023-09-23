@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "dependabot/file_updaters"
@@ -9,6 +10,7 @@ module Dependabot
       require_relative "file_updater/packages_config_declaration_finder"
       require_relative "file_updater/project_file_declaration_finder"
       require_relative "file_updater/property_value_updater"
+      require_relative "file_updater/lockfile_updater"
 
       def self.updated_files_regex
         [
@@ -18,7 +20,8 @@ module Dependabot
           /^dotnet-tools\.json$/i,
           /^Directory\.Build\.props$/i,
           /^Directory\.Build\.targets$/i,
-          /^Packages\.props$/i
+          /^Packages\.props$/i,
+          /^packages\.lock\.json$/i
         ]
       end
 
@@ -27,7 +30,7 @@ module Dependabot
 
         # Loop through each of the changed requirements, applying changes to
         # all files for that change. Note that the logic is different here
-        # to other languages because donet has property inheritance across
+        # to other languages because dotnet has property inheritance across
         # files
         dependencies.each do |dependency|
           updated_files = update_files_for_dependency(
@@ -35,6 +38,8 @@ module Dependabot
             dependency: dependency
           )
         end
+
+        updated_files = update_lock_files(updated_files)
 
         updated_files.reject! { |f| dependency_files.include?(f) }
 
@@ -46,7 +51,15 @@ module Dependabot
       private
 
       def project_files
-        dependency_files.select { |df| df.name.match?(/\.[a-z]{2}proj$/) }
+        dependency_files.select { |df| project_file?(df) }
+      end
+
+      def project_file?(file)
+        File.basename(file.name).match?(/\.[a-z]{2}proj$|[Dd]irectory.[Pp]ackages.props/)
+      end
+
+      def lock_file?(file)
+        File.basename(file.name).match?(/^packages\.lock\.json$/i)
       end
 
       def packages_config_files
@@ -72,8 +85,8 @@ module Dependabot
       def update_files_for_dependency(files:, dependency:)
         # The UpdateChecker ensures the order of requirements is preserved
         # when updating, so we can zip them together in new/old pairs.
-        reqs = dependency.requirements.zip(dependency.previous_requirements).
-               reject { |new_req, old_req| new_req == old_req }
+        reqs = dependency.requirements.zip(dependency.previous_requirements)
+                         .reject { |new_req, old_req| new_req == old_req }
 
         # Loop through each changed requirement and update the files
         reqs.each do |new_req, old_req|
@@ -97,9 +110,9 @@ module Dependabot
         files = files.dup
         property_name = req.fetch(:metadata).fetch(:property_name)
 
-        PropertyValueUpdater.
-          new(dependency_files: files).
-          update_files_for_property_change(
+        PropertyValueUpdater
+          .new(dependency_files: files)
+          .update_files_for_property_change(
             property_name: property_name,
             updated_value: req.fetch(:requirement),
             callsite_file: file
@@ -173,6 +186,34 @@ module Dependabot
           original_req_string,
           requirement.fetch(:requirement)
         )
+      end
+
+      def update_lock_files(files)
+        files = files.dup
+
+        lock_files = files.select { |f| lock_file?(f) }
+        lock_files.each do |lock_file|
+          project_file = files.find { |f| project_file?(f) && File.dirname(f.name) == File.dirname(lock_file.name) }
+          next if project_file.nil?
+
+          new_content = updated_lockfile_content(files, lock_file)
+          next if new_content == lock_file.content
+
+          files[files.index(lock_file)] =
+            updated_file(file: lock_file, content: new_content)
+        end
+
+        files
+      end
+
+      def updated_lockfile_content(files, lock_file)
+        @updated_lockfile_content ||= {}
+        @updated_lockfile_content[lock_file.name] ||=
+          LockfileUpdater.new(
+            dependency_files: files,
+            lock_file: lock_file,
+            credentials: credentials
+          ).updated_lockfile_content
       end
     end
   end

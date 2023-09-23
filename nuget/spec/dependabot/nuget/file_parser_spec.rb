@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require "dependabot/dependency_file"
@@ -132,8 +133,8 @@ RSpec.describe Dependabot::Nuget::FileParser do
 
         it "has the right details" do
           expect(dependency).to be_a(Dependabot::Dependency)
-          expect(dependency.name).
-            to eq("Microsoft.CodeDom.Providers.DotNetCompilerPlatform")
+          expect(dependency.name)
+            .to eq("Microsoft.CodeDom.Providers.DotNetCompilerPlatform")
           expect(dependency.version).to eq("1.0.0")
           expect(dependency.requirements).to eq(
             [{
@@ -151,8 +152,8 @@ RSpec.describe Dependabot::Nuget::FileParser do
 
         it "has the right details" do
           expect(dependency).to be_a(Dependabot::Dependency)
-          expect(dependency.name).
-            to eq("Microsoft.Net.Compilers")
+          expect(dependency.name)
+            .to eq("Microsoft.Net.Compilers")
           expect(dependency.version).to eq("1.0.1")
           expect(dependency.requirements).to eq(
             [{
@@ -179,8 +180,8 @@ RSpec.describe Dependabot::Nuget::FileParser do
 
           it "has the right details" do
             expect(dependency).to be_a(Dependabot::Dependency)
-            expect(dependency.name).
-              to eq("Microsoft.CodeDom.Providers.DotNetCompilerPlatform")
+            expect(dependency.name)
+              .to eq("Microsoft.CodeDom.Providers.DotNetCompilerPlatform")
             expect(dependency.version).to eq("1.0.0")
             expect(dependency.requirements).to eq(
               [{
@@ -198,8 +199,8 @@ RSpec.describe Dependabot::Nuget::FileParser do
 
           it "has the right details" do
             expect(dependency).to be_a(Dependabot::Dependency)
-            expect(dependency.name).
-              to eq("Microsoft.Net.Compilers")
+            expect(dependency.name)
+              .to eq("Microsoft.Net.Compilers")
             expect(dependency.version).to eq("1.0.1")
             expect(dependency.requirements).to eq(
               [{
@@ -356,6 +357,36 @@ RSpec.describe Dependabot::Nuget::FileParser do
       end
 
       its(:length) { is_expected.to eq(9) }
+
+      describe "the last dependency" do
+        subject(:dependency) { dependencies.last }
+
+        it "has the right details" do
+          expect(dependency).to be_a(Dependabot::Dependency)
+          expect(dependency.name).to eq("System.WebCrawler")
+          expect(dependency.version).to eq("1.1.1")
+          expect(dependency.requirements).to eq(
+            [{
+              requirement: "1.1.1",
+              file: "directory.packages.props",
+              groups: ["dependencies"],
+              source: nil
+            }]
+          )
+        end
+      end
+    end
+
+    context "with only directory.packages.props file" do
+      let(:files) { [packages_file] }
+      let(:packages_file) do
+        Dependabot::DependencyFile.new(
+          name: "directory.packages.props",
+          content: fixture("csproj", "directory.packages.props")
+        )
+      end
+
+      its(:length) { is_expected.to eq(4) }
 
       describe "the last dependency" do
         subject(:dependency) { dependencies.last }
